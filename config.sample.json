@@ -1,0 +1,20 @@
+{
+    "models": {
+        "gemini-2.5-flash": {
+            "apikey": "<GEMINI_API_KEY>"
+        }
+    },
+    "mysql": {
+        "host": "localhost",
+        "database": "chatapp_db",
+        "user": "chatapp",
+        "password": "<MYSQL_PASSWORD>"
+    },
+    "webserver": {
+        "port": 8010
+    },
+    "logging": {
+        "level": "INFO",
+        "filename": "chatapp.log"
+    }
+}

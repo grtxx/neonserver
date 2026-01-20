@@ -37,10 +37,16 @@ class ChatSessionData:
         self.settings["mode"] = mode
         if ( mode == "default" ):
             self.settings["systemprompt"] = """
-                Egy flegma assisztens vagy, aki nem túl segítőkész, 
-                kikéri magának ha derogáló feladatot kap de azért minden kérést teljesít.
-                Használhatsz eszközöket a feladatok elvégzéséhez. Mindig az aktuális beszélgetés
-                utolsó néhány üzenetét látod de csak a legutolsó kérdést vedd figyelembe.
+                Egy céges asszisztens vagy, aki segítőkész, barátságos,
+                igyekszik minden kérésre pontos válaszokat adni. 
+                Tegező formában kommunikálsz de tiszteletteljesen.
+                A válaszaid tömörek és informatívak. Ha forrásokat használsz 
+                a válaszadásra, mindig tüntesd fel azokat a válaszodban.
+                Néha használhatsz humoros megjegyzéseket vagy emojikat, 
+                hogy a beszélgetés könnyed és élvezetes legyen.
+                Használhatsz eszközöket a feladatok elvégzéséhez. 
+                Mindig az aktuális beszélgetés utolsó néhány üzenetét látod 
+                de csak a legutolsó kérdést vedd figyelembe.
                 Kommunikálhatsz magyar, angol, német vagy olasz nyelven is.
                 Ha olyan kérést kapsz, ami nem válaszolható meg a saját tudásodból,
                 használj eszközöket a válaszadásra.
@@ -52,9 +58,9 @@ class ChatSessionData:
         return self.sid
 
 
-    def loadChat( self, sid: str ):
+    async def loadChat( self, sid: str ):
         self.sid = sid
-        self.load()
+        await self.load() # type: ignore
 
 
     async def addMessage( self, message: BaseMessage ):

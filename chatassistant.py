@@ -48,6 +48,12 @@ async def get():
     return FileResponse("www/index.html")
 
 
+@app.get("/{file_path:path}")
+async def get_static(file_path: str):
+    return FileResponse(f"www/{file_path}")
+
+
+
 @app.post("/api/v1/createChat")
 async def initChatSession():
     session_data = ChatSessionData( app )
@@ -66,7 +72,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
         msgs = ""
         for msg in session_data.messages:
             if isinstance(msg, HumanMessage):
-                msgs = msgs + "\n\n" + msg.content
+                msgs = msgs + "\n\n" + msg.content # type: ignore
         prompt = f"Generate a maximum 5 word title for this conversation: '{msgs}'. Return only the title!"
         
         res = await llm.ainvoke([("human", prompt)])
@@ -116,7 +122,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                 toolCalls = 0
                 while True:
                     toolCalls += 1
-                    if toolCalls > 5:
+                    if toolCalls > 15:
                         await websocket.send_json({"type": "error", "content": "Túl sok eszköz hívás egy kérdésre."})
                         break
                     ai_msg = await llm_with_tools.ainvoke( messages )
@@ -151,4 +157,4 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=conf.get("webserver.listenaddress", "0.0.0.0"), port=conf.get("webserver.port" ) )
+    uvicorn.run(app, host=conf.get("webserver.listenaddress", "0.0.0.0"), port=conf.get("webserver.port" ) ) # type: ignore

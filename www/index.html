@@ -18,11 +18,13 @@
         button:hover { background-color: #218838; }
         .tool-call { color: #d63384; font-family: monospace; font-size: 0.9em; background: #fff0f6; padding: 2px 5px; border-radius: 3px; }
     </style>
+    <script type="text/javascript" src="showdown.min.js"></script>
 </head>
 <body>
 
 <div id="chat-container">
-    <h2>Gemini AI + MCP Tools<div id="sidbox"></div></h2>
+    <h2>Gemini AI + MCP Tools - <span id="titlebox"></span><br />
+    <div style="font-size:0.5em;" id="sidbox"></div></h2>
     <button onclick="newchat()">Új Chat</button>
     <div id="chat-window">
         <div class="message ai">Szia! Én egy Gemini asszisztens vagyok MCP toolokkal felvértezve. Miben segíthetek?</div>
@@ -66,25 +68,42 @@
             const data = JSON.parse(event.data);
             
             if (data.type === "token") {
-                data.content = JSON.stringify( data.content );
-                // Ha ez az első token az AI-tól, csinálunk neki egy buborékot
-                if (!currentAiMessageDiv) {
-                    currentAiMessageDiv = document.createElement("div");
-                    currentAiMessageDiv.className = "message ai";
-                    chatWindow.appendChild(currentAiMessageDiv);
+                if (!Array.isArray(data.content)) {
+                    data.content = [ data.content ]
                 }
-                
-                // Ha a szöveg csillagok között van, tool hívásként formázzuk
-                if ( data.content.startsWith("*") && data.content.endsWith("* ")) {
-                    currentAiMessageDiv.innerHTML += `<span class="tool-call">${data.content.replace(/\*/g, '')}</span>`;
-                } else {
-                    currentAiMessageDiv.innerText += data.content;
+                for ( c in data.content ) {
+                    let content = data.content[c];
+                    if ( ! content.text ) {
+                        content = { text: content };
+                    }
+                    // Ha ez az első token az AI-tól, csinálunk neki egy buborékot
+                    if (!currentAiMessageDiv) {
+                        currentAiMessageDiv = document.createElement("div");
+                        currentAiMessageDiv.className = "message ai";
+                        chatWindow.appendChild(currentAiMessageDiv);
+                    }
+                    
+                    // Ha a szöveg csillagok között van, tool hívásként formázzuk
+                    if ( content.text.startsWith("*") && content.text.endsWith("* ")) {
+                        currentAiMessageDiv.innerHTML += `<span class="tool-call">${content.text.replace(/\*/g, '')}</span>`;
+                    } else {
+                        let output = ""
+                        output += content.text;
+                        if ( content.output ) {
+                            output += "<div><pre>" + content.output + "</pre></div>";
+                        }
+                        let sd = new showdown.Converter();
+                        currentAiMessageDiv.innerHTML += sd.makeHtml(output);
+                    }
                 }
-                
+
                 chatWindow.scrollTop = chatWindow.scrollHeight;
             } 
             else if (data.type === "done") {
                 currentAiMessageDiv = null; // Felkészülés a következő válaszra
+            } 
+            else if (data.type === "title") {
+                document.getElementById("titlebox").innerText = data.content; // Megváltoztatjuk az oldal címét
             } 
             else if (data.type === "error") {
                 alert("Hiba történt: " + data.content);

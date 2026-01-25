@@ -2,10 +2,10 @@ import json
 import os
 import logging
 from typing import Any
-import aiomysql
-from mcp.client.sse import sse_client
-from mcp import ClientSession
-from langchain_core.tools import Tool
+import aiomysql # type: ignore
+from mcp.client.sse import sse_client  # type: ignore
+from mcp import ClientSession # type: ignore
+from langchain_core.tools import Tool # type: ignore
 
 
 class configManager:
@@ -22,9 +22,9 @@ class configManager:
     def get( self, qstr: str | None = None, default: Any = None ):
         if ( qstr is None ):
             return self.conf
-        qstr = f"{qstr}".split( "." ) # type: ignore
+        qstrA: list[str] = f"{qstr}".split( "." ) 
         cur = self.conf
-        for q in qstr:
+        for q in qstrA:
             if ( q in cur ):
                 cur = cur[q]
             else:
@@ -67,7 +67,7 @@ async def get_tools():
                                 description=t.description if t.description else ""
                             )
                         )
-                        tool_to_server_map[t.name] = url
+                        tool_to_server_map[t.name] = { "url": url, "inputSchema": t.inputSchema }
                     log.info(f"Loaded {len(mcp_tools.tools)} tools from {name}")
         except Exception as e:
             log.error(f"Error accessing MCP server {name}: {str(e)}")
@@ -75,7 +75,7 @@ async def get_tools():
     return all_langchain_tools, tool_to_server_map
 
 
-def get_server_for_tool( map, tool_name: str):
+def get_params_for_tool( map, tool_name: str):
     return map.get(tool_name)
 
 

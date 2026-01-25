@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run chatserver.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/chatserver.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

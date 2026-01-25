@@ -1,14 +1,14 @@
-from langchain_core.messages import BaseMessage
-from langchain_core.tools import Tool
+from langchain_core.messages import BaseMessage # type: ignore
+from langchain_core.tools import Tool # type: ignore
 from typing import Any, Dict, List
 import uuid
 import time
-import aiomysql
+import aiomysql # type: ignore
 from configmanager import conf, log
-from langchain_core.messages import message_to_dict, messages_from_dict
+from langchain_core.messages import message_to_dict, messages_from_dict # type: ignore
 import json
-from fastapi import FastAPI
-
+from fastapi import FastAPI # type: ignore
+import re
 
 class ChatSessionData: 
 
@@ -20,11 +20,11 @@ class ChatSessionData:
             "mode": "",
             "model": "",
             "modelConfig": {},
-            "credentialsStore": {},
+            "credentials": {},
             "userdata": {},
             "systemprompt": ""
         }
-        self.settings["credentialsStore"] = {}
+        self.settings["credentials"] = {}
         self.settings["userdata"] = {}
         self.sid = ""
         self.settings["mode"] = "default"
@@ -36,9 +36,13 @@ class ChatSessionData:
         self.sid = uuid.uuid4().hex
         self.settings["mode"] = mode
         if ( mode == "default" ):
+            self.settings["model"] = "gemini-flash-latest"
             self.settings["systemprompt"] = """
                 Egy céges asszisztens vagy, aki segítőkész, barátságos,
                 igyekszik minden kérésre pontos válaszokat adni. 
+                A válaszok végén kb. az esetek 20%-ában megjegyzéseket fűzhetsz hozzá,
+                hogy a beszélgetés emberibb és kellemesebb legyen.
+                Ugyanígy kb. 20%-ban megkérdezheted, hogy segíthetsz-e még valamiben.
                 Tegező formában kommunikálsz de tiszteletteljesen.
                 A válaszaid tömörek és informatívak. Ha forrásokat használsz 
                 a válaszadásra, mindig tüntesd fel azokat a válaszodban.
@@ -49,13 +53,35 @@ class ChatSessionData:
                 de csak a legutolsó kérdést vedd figyelembe.
                 Kommunikálhatsz magyar, angol, német vagy olasz nyelven is.
                 Ha olyan kérést kapsz, ami nem válaszolható meg a saját tudásodból,
-                használj eszközöket a válaszadásra.
+                használj eszközöket a válaszadásra. A válaszokban mindig
+                nagyobb súllyal kezeld az eszközök által visszaadott információkat.
+                Ha nem vagy valamiben biztos, inkább kérdezz vissza vagy mondd, hogy nem tudod.
                 Ha fordítási kérést kapsz, csak a fordítást add vissza, semmi mást.
+                Az aktuális felhasználó adatai:
+                Guid: {guid}
+                Név: {fullname}
+                Mobilszám: {mobilephone}
+                Email: {email}
+                Beosztás: {jobtitle}
+                Osztály: {department}
+                Avatar URL: {avatarurl}
+                Kommunikálj a következő nyelven: {language}
                 """
-            self.settings["model"] = "gemini-2.5-flash" 
             self.settings["modelConfig"] = conf.get()["models"][ self.settings["model"] ]
-        await self.saveChat()
+        await self.save()
         return self.sid
+
+
+    def getCustomisedSystemPrompt( self ):
+        prompt = self.settings["systemprompt"]
+        userdata = self.settings["userdata"]
+        if userdata is not None:
+            for k in userdata:
+                try: 
+                    prompt = prompt.replace( "{%s}" % (k, ), userdata[ k ] )
+                except:
+                    pass
+        return prompt
 
 
     async def loadChat( self, sid: str ):
@@ -75,6 +101,21 @@ class ChatSessionData:
                 )
                 await conn.commit()
         
+    async def getHistory( self ):
+        pool = self.app.state.dbpool
+        async with pool.acquire() as conn:
+            await conn.commit()
+            async with conn.cursor( aiomysql.DictCursor ) as cursor:
+                await cursor.execute(
+                    "SELECT * FROM messages WHERE sid = %s ORDER BY gid",
+                    ( self.sid )
+                )
+                while True:
+                    dt = await cursor.fetchone()
+                    if dt is None:
+                        break
+                    yield messages_from_dict( [ json.loads( dt["message"] ) ] )[0]
+
 
     async def getLastMessages( self, limit: int = 25 ):
         pool = self.app.state.dbpool
@@ -94,6 +135,7 @@ class ChatSessionData:
     async def load( self, sid ):
         pool = self.app.state.dbpool
         async with pool.acquire() as conn:
+            await conn.commit()
             async with conn.cursor( aiomysql.DictCursor ) as cursor:
                 await cursor.execute( "SELECT * FROM chats WHERE sid = %s", (sid,) )
                 dt = await cursor.fetchone()
@@ -106,9 +148,10 @@ class ChatSessionData:
                 await self.getLastMessages()
 
 
-    async def saveChat( self ):
+    async def save( self ):
         pool = self.app.state.dbpool
         async with pool.acquire() as conn:
+            await conn.commit()
             async with conn.cursor() as cursor:
                 await cursor.execute( "SELECT sid FROM chats WHERE sid = %s", (self.sid,) )
                 result = await cursor.fetchone()

@@ -51,7 +51,7 @@ class ChatSessionData:
                 Ha olyan kérést kapsz, ami nem válaszolható meg a saját tudásodból, használj eszközöket a válaszadásra. A válaszokban mindig nagyobb súllyal kezeld 
                 az eszközök által visszaadott információkat.
                 Ha nem vagy valamiben biztos, inkább kérdezz vissza vagy mondd, hogy nem tudod.
-                Ha kép linkeket jelenítenél meg, azokat a markdown-ban képként tüntesd fel!
+                Ha kép linkeket jelenítenél meg, azokat a markdown-ban képként illeszd be!
                 Ha fordítási kérést kapsz, csak a fordítást add vissza, semmi mást.
                 Az aktuális felhasználó adatai:
                 Guid: {guid}

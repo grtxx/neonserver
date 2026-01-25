@@ -49,7 +49,8 @@ async def get_tools():
     tool_to_server_map = {}
     servers = conf.get( "mcpservers", {} )
     for name in conf.get( "mcpservers" ):
-        url = f"http://{servers[name]['host']}:{servers[name]['port']}/sse"
+        #url = f"http://{servers[name]['host']}:{servers[name]['port']}/sse"
+        url = servers[name]["url"]
         log.info(f"Discovering tools: {name} ({url})")
         
         try:

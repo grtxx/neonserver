@@ -3,7 +3,7 @@ from fastapi import FastAPI, WebSocket # type: ignore
 from mcp import ClientSession, StdioServerParameters # type: ignore
 from mcp.client.sse import sse_client # type: ignore
 from langchain_google_genai import ChatGoogleGenerativeAI # type: ignore
-from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage # type: ignore
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage, SystemMessage # type: ignore
 from fastapi.responses import FileResponse # type: ignore
 from chatsessiondata import ChatSessionData
 from configmanager import conf, log
@@ -26,7 +26,7 @@ async def lifespan( app: FastAPI):
 app = FastAPI( lifespan=lifespan )
 
 
-async def call_mcp_tool(name: str, args: dict):    
+async def call_mcp_tool(name: str, args: dict, progress=None ):    
     toolparams = configmanager.get_params_for_tool( app.state.toolmap, name)
     try:
         async with sse_client( toolparams['url'] ) as (read, write):
@@ -42,6 +42,8 @@ async def call_mcp_tool(name: str, args: dict):
                         if ( ( '__arg%d' % cnt ) in args ):
                             args2[ k ] = args[ '__arg%d' % cnt ]
                     finalArguments = args2
+                #if ( progress is not None ):
+                #    finalArguments['__progresscallback'] = progress
                 result = await session.call_tool( name, arguments=finalArguments )
                             
                 if result.content and hasattr(result.content[0], 'text'):
@@ -162,23 +164,52 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                     if toolCalls > 15:
                         await websocket.send_json({"type": "error", "content": "Túl sok eszköz hívás egy kérdésre."})
                         break
-                    ai_msg = await llm_with_tools.ainvoke( messages )
-                    messages.append(ai_msg)
+                    #ai_msg = await llm_with_tools.ainvoke( messages )
+
+                    ai_msg = None
+                    async for event in llm_with_tools.astream_events(messages, version="v2"):
+                        kind = event["event"]
+                        print( event["event"] )
+
+                        if kind == "on_chat_model_stream":
+                            chunk = event["data"]["chunk"] # type: ignore
+                            if ai_msg is None:
+                                ai_msg = chunk
+                            else:
+                                ai_msg += chunk
+                            content = event["data"]["chunk"].content # type: ignore
+                            if content:
+                                await websocket.send_json({"type": "token", "content": content } )
+
+                        elif kind == "on_tool_start":
+                            tool_name = event["name"]
+                            await websocket.send_json({"type": "token", "content": f"*{tool_name} hívása...*"})
+                            await websocket.send_json({"type": "done"})
+                            break
+                        elif kind == "on_tool_end":
+                            pass
+
+                    #await websocket.send_json({"type": "done"})
+
+                    if ai_msg is None:
+                        continue
+
+                    messages.append( ai_msg )
                     await session_data.addMessage( ai_msg )
 
-                    if not ai_msg.tool_calls:
+                    if not ai_msg.tool_calls: # type: ignore
                         # Ha nincs több tool hívás, kilépünk a belső loopból
-                        await websocket.send_json({"type": "token", "content": ai_msg.content})
+                        #await websocket.send_json({"type": "token", "content": ai_msg.content})
                         await websocket.send_json({"type": "done"})
                         break
                     
                     # Ha vannak tool hívások, mindegyiket végrehajtjuk
-                    for tool_call in ai_msg.tool_calls:
+                    for tool_call in ai_msg.tool_calls: # type: ignore
                         await websocket.send_json({"type": "token", "content": f"*{tool_call['name']} hívása...* "})
                         await websocket.send_json({"type": "done"})
                         
                         # MCP hívás
-                        observation = await call_mcp_tool(tool_call["name"], tool_call["args"])
+                        observation = await call_mcp_tool(tool_call["name"], tool_call["args"], progress=lambda msg: websocket.send_json({"type": "token", "content": msg}) )
                         
                         # Visszajelzés a történetbe
                         messages.append( ToolMessage( content=str(observation), tool_call_id=tool_call["id"] ) )

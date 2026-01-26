@@ -154,9 +154,11 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                         if len(messages) <= 1:
                             break
 
-                user_text = await websocket.receive_text()
-                messages.append( HumanMessage(content=user_text) ) 
-                await session_data.addMessage( HumanMessage(content=user_text) )
+                try:
+                    user_text = await websocket.receive_text()
+                    await session_data.addMessage( HumanMessage(content=user_text) )
+                except Exception as e:
+                    pass
 
                 toolCalls = 0
                 while True:
@@ -183,13 +185,14 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
 
                         elif kind == "on_tool_start":
                             tool_name = event["name"]
-                            await websocket.send_json({"type": "token", "content": f"*{tool_name} hívása...*"})
-                            await websocket.send_json({"type": "done"})
+                            try:
+                                await websocket.send_json({"type": "token", "content": f"*{tool_name} hívása...*"})
+                                await websocket.send_json({"type": "done"})
+                            except:
+                                pass
                             break
                         elif kind == "on_tool_end":
                             pass
-
-                    #await websocket.send_json({"type": "done"})
 
                     if ai_msg is None:
                         continue
@@ -197,23 +200,35 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                     messages.append( ai_msg )
                     await session_data.addMessage( ai_msg )
 
+                    if ( websocket.client_state.name != "CONNECTED" ):
+                        raise Exception("Websocket disconnected")
+
                     if not ai_msg.tool_calls: # type: ignore
                         # Ha nincs több tool hívás, kilépünk a belső loopból
                         #await websocket.send_json({"type": "token", "content": ai_msg.content})
-                        await websocket.send_json({"type": "done"})
+                        try:
+                            await websocket.send_json({"type": "done"})
+                        except:
+                            pass
                         break
                     
                     # Ha vannak tool hívások, mindegyiket végrehajtjuk
                     for tool_call in ai_msg.tool_calls: # type: ignore
-                        await websocket.send_json({"type": "token", "content": f"*{tool_call['name']} hívása...* "})
-                        await websocket.send_json({"type": "done"})
+                        try:
+                            await websocket.send_json({"type": "token", "content": f"*{tool_call['name']} hívása...* "})
+                            await websocket.send_json({"type": "done"})
+                        except:
+                            pass
                         
                         # MCP hívás
                         observation = await call_mcp_tool(tool_call["name"], tool_call["args"], progress=lambda msg: websocket.send_json({"type": "token", "content": msg}) )
                         
                         # Visszajelzés a történetbe
                         messages.append( ToolMessage( content=str(observation), tool_call_id=tool_call["id"] ) )
-                        await session_data.addMessage( ToolMessage( content=str(observation), tool_call_id=tool_call["id"] ) )
+                        try:
+                            await session_data.addMessage( ToolMessage( content=str(observation), tool_call_id=tool_call["id"] ) )
+                        except:
+                            pass
 
             except Exception as e:
                 await websocket.send_json({"type": "error", "content": str(e)})
@@ -221,7 +236,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
 
     except Exception as e:
         print( "Session end:", str(e) )
-
+    print( "Session terminated." );
 
 if __name__ == "__main__":
     import uvicorn # type: ignore

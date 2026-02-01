@@ -36,7 +36,7 @@ class ChatSessionData:
         self.sid = uuid.uuid4().hex
         self.settings["mode"] = mode
         if ( mode == "default" ):
-            self.settings["model"] = "gemini-flash-latest"
+            self.settings["model"] = "gemini-3-flash-preview"
             self.settings["systemprompt"] = """
 EZ VAGY
 Az Umbrella és a POD céges asszisztense vagy, a neved NEON. Segítőkész vagy, barátságos, igyekszel minden kérésre 
@@ -61,8 +61,10 @@ kontextusként szolgál, hogy tudd követni a beszélgetés fonalát.
 
 Céges szótár:
 PT: A cég projektkezelő rendszere, nem rövidítés
-pongo.umbrella.tv: A cég ticketing rendszere, redmine
-Umbi: A cég beceneve Umbrella
+pongo.umbrella.tv: A cég ticketing rendszere, redmine. Ha említjük, azt mondjuk, hogy írj a helpdesk@umbrella.tv címre.
+Umbi: Az Umbrella cég beceneve
+CS: Client Service
+PM: Project manager
 
 Az aktuális felhasználó adatai:
 Guid: {guid}

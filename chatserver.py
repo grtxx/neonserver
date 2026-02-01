@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
+import json
 from fastapi import FastAPI, WebSocket # type: ignore
+import langchain
 from mcp import ClientSession, StdioServerParameters # type: ignore
 from mcp.client.sse import sse_client # type: ignore
 from langchain_google_genai import ChatGoogleGenerativeAI # type: ignore
@@ -9,6 +11,8 @@ from chatsessiondata import ChatSessionData
 from configmanager import conf, log
 import configmanager
 from fastapi import Request # type: ignore
+
+langchain.debug = True
 
 
 @asynccontextmanager
@@ -112,10 +116,10 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
         for msg in session_data.messages:
             if isinstance(msg, HumanMessage):
                 msgs = msgs + "\n\n" + msg.content # type: ignore
-        prompt = f"Generate a maximum 8 word title for this conversation: '{msgs}'. Return only the title in the conversation's language!"
+        prompt = f"Generate a maximum 8 word title for this conversation:\n\n'{msgs}'\n\nReturn only the title in the conversation's language!"
         
         res = await llm.ainvoke([("human", prompt)])
-        new_title = res.content.strip().replace('"', '')
+        new_title = res.content[0]["text"].strip()
         
         session_data.name = new_title
         await session_data.save()
@@ -156,36 +160,47 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
 
                 try:
                     user_text = await websocket.receive_text()
-                    await session_data.addMessage( HumanMessage(content=user_text) )
+                    user_msg = HumanMessage( content=user_text )
+                    await session_data.addMessage( user_msg )
+                    messages.append( user_msg )
+                    print( f"User input received: {user_text}" )
                 except Exception as e:
-                    pass
+                    break
 
                 toolCalls = 0
                 while True:
                     toolCalls += 1
                     if toolCalls > 15:
-                        await websocket.send_json({"type": "error", "content": "Túl sok eszköz hívás egy kérdésre."})
+                        await websocket.send_json({"type": "token", "content": "** Túl sok eszköz hívás egy kérdésre. **"})
                         break
                     #ai_msg = await llm_with_tools.ainvoke( messages )
 
                     ai_msg = None
+                    print( f"Streaming last messages to LLM" )
+                    tool_calls_in_answer = []
                     async for event in llm_with_tools.astream_events(messages, version="v2"):
                         kind = event["event"]
-                        print( event["event"] )
 
                         if kind == "on_chat_model_stream":
                             chunk = event["data"]["chunk"] # type: ignore
+                            print( f"Receiving chunk from LLM... {chunk}" )
+                            if hasattr( chunk, "tool_calls"):
+                                for tool_call in chunk.tool_calls: # type: ignore
+                                    tool_calls_in_answer.append(tool_call)
+
                             if ai_msg is None:
                                 ai_msg = chunk
                             else:
                                 ai_msg += chunk
-                            content = event["data"]["chunk"].content # type: ignore
+                            content = chunk.content # type: ignore
                             if content:
+                                print( f"Sending answer: {content}" )
                                 await websocket.send_json({"type": "token", "content": content } )
 
                         elif kind == "on_tool_start":
                             tool_name = event["name"]
                             try:
+                                print( f"Sending tool call: {tool_name}" )
                                 await websocket.send_json({"type": "token", "content": f"*{tool_name} hívása...*"})
                                 await websocket.send_json({"type": "done"})
                             except:
@@ -194,41 +209,41 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                         elif kind == "on_tool_end":
                             pass
 
-                    if ai_msg is None:
-                        continue
-
-                    messages.append( ai_msg )
-                    await session_data.addMessage( ai_msg )
+                    print( "LLM finished it's answer" )
+                    if ai_msg:
+                        await websocket.send_json({"type": "done"})
+                        messages.append( ai_msg )
+                        await session_data.addMessage( ai_msg )
+                
 
                     if ( websocket.client_state.name != "CONNECTED" ):
                         raise Exception("Websocket disconnected")
 
-                    if not ai_msg.tool_calls: # type: ignore
-                        # Ha nincs több tool hívás, kilépünk a belső loopból
-                        #await websocket.send_json({"type": "token", "content": ai_msg.content})
-                        try:
-                            await websocket.send_json({"type": "done"})
-                        except:
-                            pass
+                    if 'tool_calls' in ai_msg and ai_msg.tool_calls: # type: ignore
+                        for tool_call in ai_msg.tool_calls: # type: ignore
+                            tool_calls_in_answer.append(tool_call)
+
+                    if len( tool_calls_in_answer ) == 0:
                         break
-                    
+
+                    print( "Executing tool calls" )
                     # Ha vannak tool hívások, mindegyiket végrehajtjuk
-                    for tool_call in ai_msg.tool_calls: # type: ignore
+                    for tool_call in tool_calls_in_answer: # type: ignore
                         try:
                             await websocket.send_json({"type": "token", "content": f"*{tool_call['name']} hívása...* "})
                             await websocket.send_json({"type": "done"})
                         except:
-                            pass
+                            break
                         
                         # MCP hívás
+                        print( f"Calling tool {tool_call['name']}, params: {tool_call['args']}" )
                         observation = await call_mcp_tool(tool_call["name"], tool_call["args"], progress=lambda msg: websocket.send_json({"type": "token", "content": msg}) )
                         
                         # Visszajelzés a történetbe
-                        messages.append( ToolMessage( content=str(observation), tool_call_id=tool_call["id"] ) )
-                        try:
-                            await session_data.addMessage( ToolMessage( content=str(observation), tool_call_id=tool_call["id"] ) )
-                        except:
-                            pass
+                        t_msg = ToolMessage( content=str(observation), tool_call_id=tool_call["id"] )
+                        messages.append( t_msg )
+                        await session_data.addMessage( t_msg )
+                        print( f"Tool finished" )
 
             except Exception as e:
                 await websocket.send_json({"type": "error", "content": str(e)})

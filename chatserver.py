@@ -66,7 +66,7 @@ async def call_mcp_tool(name: str, args: dict, websocket: WebSocket, progress=No
                     if not "approvalToken" in toolparams['inputSchema']['properties']:
                         break
                     try:
-                        decresult = json.loads( result.content[0].text )
+                        decresult = json.loads( result.content[0].text ) # type: ignore
                         approvalToken = decresult.get( "approvalToken", "" )
                         decresult["approvalToken"] = None
                     except:

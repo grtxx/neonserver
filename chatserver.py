@@ -12,8 +12,6 @@ from configmanager import conf, log
 import configmanager
 from fastapi import Request # type: ignore
 
-langchain.debug = True
-
 
 @asynccontextmanager
 async def lifespan( app: FastAPI):
@@ -30,29 +28,81 @@ async def lifespan( app: FastAPI):
 app = FastAPI( lifespan=lifespan )
 
 
-async def call_mcp_tool(name: str, args: dict, progress=None ):    
+def normalize_params( args: dict, toolparams: dict ) -> dict:
+    finalArguments = args
+    if ( '__arg1' in args and len(args) == 1 and len(toolparams['inputSchema']['properties']) > 1 ):
+        try:
+            if isinstance(args['__arg1'], dict):
+                args = args['__arg1']
+            else:
+                oargs = args
+                args = json.loads( args['__arg1'] )
+                if ( not isinstance(args, dict) ):
+                    args = oargs
+        except:
+            pass
+    if ( '__arg1' in args ):
+        cnt = 0
+        args2 = {}
+        for k in toolparams['inputSchema']['properties'].keys():
+            cnt = cnt + 1
+            if ( ( '__arg%d' % cnt ) in args ):
+                args2[ k ] = args[ '__arg%d' % cnt ]
+        finalArguments = args2
+    return finalArguments
+
+
+async def call_mcp_tool(name: str, args: dict, websocket: WebSocket, progress=None ):    
     toolparams = configmanager.get_params_for_tool( app.state.toolmap, name)
     try:
         async with sse_client( toolparams['url'] ) as (read, write):
             async with ClientSession(read, write) as session:
-                await session.initialize()
-                
-                finalArguments = args
-                if ( '__arg1' in args ):
-                    cnt = 0
-                    args2 = {}
-                    for k in toolparams['inputSchema']['properties'].keys():
-                        cnt = cnt + 1
-                        if ( ( '__arg%d' % cnt ) in args ):
-                            args2[ k ] = args[ '__arg%d' % cnt ]
-                    finalArguments = args2
-                #if ( progress is not None ):
-                #    finalArguments['__progresscallback'] = progress
-                result = await session.call_tool( name, arguments=finalArguments )
-                            
+                args = normalize_params( args, toolparams )
+                while True:
+                    await session.initialize()                
+                    #if ( progress is not None ):
+                    #    finalArguments['__progresscallback'] = progress
+                    result = await session.call_tool( name, arguments=args )
+                    if not "approvalToken" in toolparams['inputSchema']['properties']:
+                        break
+                    try:
+                        decresult = json.loads( result.content[0].text )
+                        approvalToken = decresult.get( "approvalToken", "" )
+                        decresult["approvalToken"] = None
+                    except:
+                        # not a json response so not approval request
+                        break
+                    if ( not 'action' in decresult ):
+                        # no approval needed so exit from the loop
+                        break
+                    if decresult['action'] == 'approvalrequest':
+                        # automatically approve for now
+                        await websocket.send_json({"type": "approvalrequest", "content": decresult })
+                        useranswer = await websocket.receive_text()
+                        try:
+                            useranswer = json.loads( useranswer )
+                        except:
+                            # approval result invalid, break the loop
+                            break
+                        if ( not ( "type" in useranswer and "action" in useranswer ) ):
+                            # invalid response, break the loop
+                            break;
+                        if ( useranswer["type"] == "approvalresponse" and useranswer["action"] == "approved" ):
+                            # inject new params and call again
+                            if "overrides" in useranswer:
+                                for k in toolparams['inputSchema']['properties'].keys():
+                                    if ( k in useranswer["overrides"] ):
+                                        args[ k ] = useranswer["overrides"][ k ]
+                            args["approvalToken"] = approvalToken
+                        else:
+                            # not approved, exit
+                            result.content = useranswer["content"] if "content" in useranswer else "Tool operation interrupted by the user. DO NOT CALL ANY TOOL, WAIT FOR USER INPUT!" # type: ignore
+                            break
+
                 if result.content and hasattr(result.content[0], 'text'):
                     return result.content[0].text # type: ignore
                 return str(result.content)
+                                
     except Exception as e:
         log.error(f"Tool not available: {e}")
     return f"Tool not found: '{name}'"
@@ -176,14 +226,12 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                     #ai_msg = await llm_with_tools.ainvoke( messages )
 
                     ai_msg = None
-                    print( f"Streaming last messages to LLM" )
                     tool_calls_in_answer = []
                     async for event in llm_with_tools.astream_events(messages, version="v2"):
                         kind = event["event"]
 
                         if kind == "on_chat_model_stream":
                             chunk = event["data"]["chunk"] # type: ignore
-                            print( f"Receiving chunk from LLM... {chunk}" )
                             if hasattr( chunk, "tool_calls"):
                                 for tool_call in chunk.tool_calls: # type: ignore
                                     tool_calls_in_answer.append(tool_call)
@@ -194,13 +242,11 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                                 ai_msg += chunk
                             content = chunk.content # type: ignore
                             if content:
-                                print( f"Sending answer: {content}" )
                                 await websocket.send_json({"type": "token", "content": content } )
 
                         elif kind == "on_tool_start":
                             tool_name = event["name"]
                             try:
-                                print( f"Sending tool call: {tool_name}" )
                                 await websocket.send_json({"type": "token", "content": f"*{tool_name} hívása...*"})
                                 await websocket.send_json({"type": "done"})
                             except:
@@ -209,7 +255,6 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                         elif kind == "on_tool_end":
                             pass
 
-                    print( "LLM finished it's answer" )
                     if ai_msg:
                         await websocket.send_json({"type": "done"})
                         messages.append( ai_msg )
@@ -226,7 +271,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                     if len( tool_calls_in_answer ) == 0:
                         break
 
-                    print( "Executing tool calls" )
+                    print( f"Executing tool calls: {len(tool_calls_in_answer)}" )
                     # Ha vannak tool hívások, mindegyiket végrehajtjuk
                     for tool_call in tool_calls_in_answer: # type: ignore
                         try:
@@ -236,14 +281,16 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                             break
                         
                         # MCP hívás
+                        #print( "--------------------------" )
                         print( f"Calling tool {tool_call['name']}, params: {tool_call['args']}" )
-                        observation = await call_mcp_tool(tool_call["name"], tool_call["args"], progress=lambda msg: websocket.send_json({"type": "token", "content": msg}) )
+                        observation = await call_mcp_tool(tool_call["name"], tool_call["args"], websocket, progress=lambda msg: websocket.send_json({"type": "token", "content": msg}) )
+                        #print( f"Tool response {str(observation)}" )
+                        #print( "" )
                         
                         # Visszajelzés a történetbe
                         t_msg = ToolMessage( content=str(observation), tool_call_id=tool_call["id"] )
                         messages.append( t_msg )
                         await session_data.addMessage( t_msg )
-                        print( f"Tool finished" )
 
             except Exception as e:
                 await websocket.send_json({"type": "error", "content": str(e)})

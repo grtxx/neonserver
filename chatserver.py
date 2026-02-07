@@ -202,13 +202,6 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                 await generate_title( llm, session_data, websocket )
                 
             try:
-                if len( session_data.messages) > 1:
-                    while len(messages) > 25 or not isinstance(messages[1], HumanMessage):
-                        messages.pop(1)  # Az első üzenet a rendszerüzenet, azt nem töröljük
-                        if len(messages) <= 1:
-                            break
-                messages[0] = SystemMessage( content=session_data.getCustomisedSystemPrompt() )
-
                 try:
                     user_text = await websocket.receive_text()
                     user_msg = HumanMessage( content=user_text )
@@ -218,6 +211,14 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                     print( f"User input received: {user_text}" )
                 except Exception as e:
                     break
+
+                print( "LLM history and system prompt update" )
+                if len( session_data.messages) > 1:
+                    while len(messages) > 25 or not isinstance(messages[1], HumanMessage):
+                        messages.pop(1)  # Az első üzenet a rendszerüzenet, azt nem töröljük
+                        if len(messages) <= 1:
+                            break
+                messages[0] = SystemMessage( content=session_data.getCustomisedSystemPrompt() )
 
                 print( "LLM loop start" )
                 toolCalls = 0

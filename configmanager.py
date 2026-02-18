@@ -51,6 +51,8 @@ async def get_tools():
     for name in conf.get( "mcpservers" ):
         #url = f"http://{servers[name]['host']}:{servers[name]['port']}/sse"
         url = servers[name]["url"]
+        credentials = servers[name]["credentials"] if "credentials" in servers[name] else None
+        proto = servers[name]["proto"] if "proto" in servers[name] else "sse"
         log.info(f"Discovering tools: {name} ({url})")
         
         try:
@@ -68,7 +70,12 @@ async def get_tools():
                                 description=t.description if t.description else ""
                             )
                         )
-                        tool_to_server_map[t.name] = { "url": url, "inputSchema": t.inputSchema }
+                        tool_to_server_map[t.name] = { 
+                            "url": url, 
+                            "inputSchema": t.inputSchema,
+                            "credentials": credentials,
+                            "proto": proto
+                        }
                     log.info(f"Loaded {len(mcp_tools.tools)} tools from {name}")
         except Exception as e:
             log.error(f"Error accessing MCP server {name}: {str(e)}")

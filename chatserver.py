@@ -1,11 +1,11 @@
 from contextlib import asynccontextmanager
 import json
+import sys
 from fastapi import FastAPI, WebSocket # type: ignore
 import langchain
-from mcp import ClientSession, StdioServerParameters # type: ignore
-from mcp.client.sse import sse_client # type: ignore
+from mcp import ClientSession # type: ignore
 from langchain_google_genai import ChatGoogleGenerativeAI # type: ignore
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage, SystemMessage # type: ignore
+from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage # type: ignore
 from fastapi.responses import FileResponse # type: ignore
 from chatsessiondata import ChatSessionData
 from configmanager import conf, log
@@ -52,14 +52,16 @@ def normalize_params( args: dict, toolparams: dict ) -> dict:
     return finalArguments
 
 
-async def call_mcp_tool(name: str, args: dict, websocket: WebSocket, progress=None ):    
+async def call_mcp_tool(sessiondata, name: str, args: dict, websocket: WebSocket, progress=None ):    
     toolparams = configmanager.get_params_for_tool( app.state.toolmap, name)
     try:
-        async with sse_client( toolparams['url'] ) as (read, write):
+        sseClient = sessiondata.getConfiguredSSEClient( toolparams )
+
+        async with sseClient as (read, write):
             async with ClientSession(read, write) as session:
                 args = normalize_params( args, toolparams )
+                await session.initialize()
                 while True:
-                    await session.initialize()                
                     #if ( progress is not None ):
                     #    finalArguments['__progresscallback'] = progress
                     result = await session.call_tool( name, arguments=args )
@@ -120,9 +122,10 @@ async def get_chat_history(sid: str):
     await session_data.load(sid)
     messages = []
     async for msg in session_data.getHistory():
+        ( ls, content ) = await session_data.extractMemoryCommands( msg.content, 0, False )
         messages.append( {
             "type": msg.type,
-            "content": msg.content,
+            "content": content,
             "tool_call_id": getattr(msg, "tool_call_id", None)
         } )
     return {
@@ -194,8 +197,8 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
     )
     llm_with_tools = llm.bind_tools( session_data.tools )
 
-    messages = await session_data.getLastMessages(35)
-    messages.insert( 0, SystemMessage( content=session_data.getCustomisedSystemPrompt() ) )
+    messages = await session_data.getLastMessages(15)
+    messages.insert( 0, SystemMessage( content=await session_data.getCustomisedSystemPrompt() ) )
     try:
         while True:
             if ( len(session_data.messages) > 8 and session_data.name == "" and not title_generation ):
@@ -204,26 +207,23 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
             try:
                 try:
                     user_text = await websocket.receive_text()
+                    if ( user_text == "" ):
+                        continue
                     user_msg = HumanMessage( content=user_text )
-                    print( "adding message to history" )
                     await session_data.saveMessage( user_msg )
                     messages.append( user_msg )
-                    print( f"User input received: {user_text}" )
                 except Exception as e:
                     break
 
-                print( "LLM history and system prompt update" )
                 if len( session_data.messages) > 1:
-                    while len(messages) > 25 or not isinstance(messages[1], HumanMessage):
+                    while len(messages) > 15 or not isinstance(messages[1], HumanMessage):
                         messages.pop(1)  # Az első üzenet a rendszerüzenet, azt nem töröljük
                         if len(messages) <= 1:
                             break
-                messages[0] = SystemMessage( content=session_data.getCustomisedSystemPrompt() )
+                messages[0] = SystemMessage( content=await session_data.getCustomisedSystemPrompt() )
 
-                print( "LLM loop start" )
                 toolCalls = 0
                 while True:
-                    print( "  LLM loop" )
                     toolCalls += 1
                     if toolCalls > 15:
                         await websocket.send_json({"type": "toolcall", "content": "> Túl sok eszköz hívás egy kérdésre."})
@@ -232,12 +232,10 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
 
                     ai_msg = None
                     tool_calls_in_answer = []
-                    print( "  Streaming events" )
                     lastcontent = ""
-                    print( "  " + str(len(messages)) + " üzenet az LLMnek" )
+                    laststate = 0
                     async for event in llm_with_tools.astream_events(messages, version="v2"):
                         kind = event["event"]
-
                         if kind == "on_chat_model_stream":
                             chunk = event["data"]["chunk"] # type: ignore
                             if hasattr( chunk, "tool_calls"):
@@ -250,43 +248,35 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                                 ai_msg += chunk
                             if ( chunk.content[:-len(lastcontent)] == lastcontent ):
                                 chunk.content = chunk.content[-len(lastcontent):] # type: ignore
-                            lastcontent = chunk.content # type: ignore
+
+                            ( laststate, lastcontent ) = await session_data.extractMemoryCommands( chunk.content, laststate, False ) # type: ignore
                             content = chunk.content # type: ignore
                             if content:
-                                await websocket.send_json({"type": "token", "content": content } )
-
-                    print( "  Answered, adding answer to history" )
+                                await websocket.send_json({"type": "token", "content": lastcontent } )
 
                     if ai_msg:
                         await websocket.send_json({"type": "done"})
                         await session_data.saveMessage( ai_msg )
+                        await session_data.extractMemoryCommands( ai_msg.content, 0, True ) # type: ignore. 
+                        # We do not use the output as we sent out the output in streaming mode, but we want to extract the memory 
+                        # commands and execute them in the context of the full answer.
                         messages.append( ai_msg )
                 
                     if len( tool_calls_in_answer ) == 0:
                         break
 
-                    print( f"Executing tool calls: {len(tool_calls_in_answer)}" )
                     # Ha vannak tool hívások, mindegyiket végrehajtjuk
-                    for tool_call in tool_calls_in_answer: # type: ignore
-                        try:
-                            await websocket.send_json({"type": "toolcall", "content": f"*{tool_call['name']} hívása...* "})
-                            await websocket.send_json({"type": "done"})
-                        except:
-                            break
-                        
+                    for tool_call in tool_calls_in_answer: # type: ignore                        
                         # MCP hívás
-                        #print( "--------------------------" )
-                        print( f"Calling tool {tool_call['name']}, params: {tool_call['args']}" )
-                        websocket.send_json({"type": "toolcall", "content": f"*{tool_call['name']}...*"}) # type: ignore
-                        observation = await call_mcp_tool(tool_call["name"], tool_call["args"], websocket, progress=lambda msg: websocket.send_json({"type": "toolcall", "content": msg}) )
-                        websocket.send_json({"type": "toolcall", "content": f"*{tool_call['name']} finished...*"}) # type: ignore
-                        print( f"Tool finished {tool_call['name']}, params: {tool_call['args']}" )
+                        await websocket.send_json({"type": "toolcall", "content": f"{tool_call['name']}..."}) # type: ignore
+                        observation = await call_mcp_tool( session_data, tool_call["name"], tool_call["args"], websocket, progress=lambda msg: websocket.send_json({"type": "toolcall", "content": msg}) )
+                        await websocket.send_json({"type": "toolcall", "content": f"finished"}) # type: ignore
+                        await websocket.send_json( {"type": "done" } ) # type: ignore
                         
                         # Visszajelzés a történetbe
                         t_msg = ToolMessage( content=str(observation), tool_call_id=tool_call["id"] )
                         await session_data.saveMessage( t_msg )
                         messages.append( t_msg )
-                        print( f"Tool call finished" )
 
             except Exception as e:
                 await websocket.send_json({"type": "error", "content": str(e)})

@@ -16,5 +16,31 @@
     "logging": {
         "level": "INFO",
         "filename": "chatapp.log"
+    },
+    "mcpservers": {
+        "simpletools": {
+            "proto": "sse",
+            "url": "http://localhost:10001/sse"
+        },
+        "wikijs": {
+            "proto": "sse",
+            "url": "http://localhost:10002/sse",
+            "credentials": {
+                "type": "bearer",
+                "bearertoken": "<token>"
+            }
+        },
+        "pttools": {
+            "proto": "sse",
+            "url": "http://localhost:10003/sse",
+            "credentials": {
+                "type": "bearer-user",
+                "bearertoken": "<token-path-in-userdata-credentials>"
+            }
+        },
+        "inside.umbrella.tv": {
+            "proto": "sse",
+            "url": "https://<basicauth_user>:<basicauth_pass>@hostname/sse"
+        }
     }
 }

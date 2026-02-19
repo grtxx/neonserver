@@ -197,7 +197,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
     )
     llm_with_tools = llm.bind_tools( session_data.tools )
 
-    messages = await session_data.getLastMessages(15)
+    messages = await session_data.getLastMessages( conf.get("chatparams.previousmessages", 15) )
     messages.insert( 0, SystemMessage( content=await session_data.getCustomisedSystemPrompt() ) )
     try:
         while True:
@@ -225,8 +225,8 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                 toolCalls = 0
                 while True:
                     toolCalls += 1
-                    if toolCalls > 15:
-                        await websocket.send_json({"type": "toolcall", "content": "> Túl sok eszköz hívás egy kérdésre."})
+                    if toolCalls > conf.get( "chatparams.max_tool_calls", 5 ):
+                        await websocket.send_json({"type": "toolcall", "content": "**Túl sok eszköz hívás egy kérdésre.**"})
                         break
                     #ai_msg = await llm_with_tools.ainvoke( messages )
 

@@ -47,13 +47,15 @@ def normalize_params( args: dict, toolparams: dict ) -> dict:
         for k in toolparams['inputSchema']['properties'].keys():
             cnt = cnt + 1
             if ( ( '__arg%d' % cnt ) in args ):
-                args2[ k ] = args[ '__arg%d' % cnt ]
+                if k == "ID":
+                    args2[ k ] = int(args[ '__arg%d' % cnt ])
+                else:
+                    args2[ k ] = args[ '__arg%d' % cnt ]
         finalArguments = args2
     return finalArguments
 
 
-async def call_mcp_tool(sessiondata, name: str, args: dict, websocket: WebSocket, progress=None ):    
-    toolparams = configmanager.get_params_for_tool( app.state.toolmap, name)
+async def call_mcp_tool_sse(sessiondata, name: str, args: dict, websocket: WebSocket, toolparams: dict, progress=None ):
     try:
         sseClient = sessiondata.getConfiguredSSEClient( toolparams )
 
@@ -108,6 +110,27 @@ async def call_mcp_tool(sessiondata, name: str, args: dict, websocket: WebSocket
     except Exception as e:
         log.error(f"Tool not available: {e}")
     return f"Tool not found: '{name}'"
+
+
+async def call_mcp_tool_jsonrpc(sessiondata, name: str, args: dict, websocket: WebSocket, toolparams: dict, progress=None ):
+    try:
+        jsonrpcClient = sessiondata.getConfiguredJsonRPCClient( toolparams )
+        args = normalize_params( args, toolparams )
+        result = await jsonrpcClient.toolCall( name, **args )
+        return result
+    except Exception as e:
+        log.error(f"Tool not available: {e}")
+    return f"Tool not found: '{name}'"
+
+
+async def call_mcp_tool(sessiondata, name: str, args: dict, websocket: WebSocket, progress=None ):    
+    toolparams = configmanager.get_params_for_tool( app.state.toolmap, name)
+
+    if toolparams['proto'] == 'sse':
+        return await call_mcp_tool_sse( sessiondata, name, args, websocket, toolparams, progress )
+
+    elif toolparams['proto'] == 'jsonrpc':
+        return await call_mcp_tool_jsonrpc( sessiondata, name, args, websocket, toolparams, progress )
 
 
 
@@ -197,7 +220,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
     )
     llm_with_tools = llm.bind_tools( session_data.tools )
 
-    messages = await session_data.getLastMessages( conf.get("chatparams.previousmessages", 15) )
+    messages = await session_data.getLastMessages( conf.get("chatparams.previousmessages", 15) ) # type: ignore
     messages.insert( 0, SystemMessage( content=await session_data.getCustomisedSystemPrompt() ) )
     try:
         while True:
@@ -225,7 +248,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                 toolCalls = 0
                 while True:
                     toolCalls += 1
-                    if toolCalls > conf.get( "chatparams.max_tool_calls", 5 ):
+                    if toolCalls > conf.get( "chatparams.max_tool_calls", 5 ): # type: ignore
                         await websocket.send_json({"type": "toolcall", "content": "**Túl sok eszköz hívás egy kérdésre.**"})
                         break
                     #ai_msg = await llm_with_tools.ainvoke( messages )

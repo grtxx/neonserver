@@ -6,6 +6,7 @@ import aiomysql # type: ignore
 from mcp.client.sse import sse_client  # type: ignore
 from mcp import ClientSession # type: ignore
 from langchain_core.tools import Tool # type: ignore
+from jsonmcp_client import jsonRPCClient
 
 
 class configManager:
@@ -55,30 +56,55 @@ async def get_tools():
         proto = servers[name]["proto"] if "proto" in servers[name] else "sse"
         log.info(f"Discovering tools: {name} ({url})")
         
-        try:
-            # Rövid timeout-ot érdemes rátenni, hogy ne akadjon el a startup, ha egy szerver lehalt
-            async with sse_client(url) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    mcp_tools = await session.list_tools()
-                    
-                    for t in mcp_tools.tools:
+        if proto == "sse":
+            try:
+                # Rövid timeout-ot érdemes rátenni, hogy ne akadjon el a startup, ha egy szerver lehalt
+                async with sse_client(url) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        mcp_tools = await session.list_tools()
+                        
+                        for t in mcp_tools.tools:
+                            all_langchain_tools.append(
+                                Tool(
+                                    name=t.name,
+                                    func=None, 
+                                    description=t.description if t.description else ""
+                                )
+                            )
+                            tool_to_server_map[t.name] = { 
+                                "url": url, 
+                                "inputSchema": t.inputSchema,
+                                "credentials": credentials,
+                                "proto": proto
+                            }
+                        log.info(f"Loaded {len(mcp_tools.tools)} tools from {name}")
+            except Exception as e:
+                log.error(f"Error accessing MCP server {name}: {str(e)}")
+
+        if proto == "jsonrpc":
+            try:
+                jsonmcp = jsonRPCClient( url, credentials=credentials )
+                mcp_tools = await jsonmcp.listTools()
+                if mcp_tools is not None:
+                    for t in mcp_tools['tools']:
                         all_langchain_tools.append(
                             Tool(
-                                name=t.name,
+                                name=t["name"],
                                 func=None, 
-                                description=t.description if t.description else ""
+                                description=t["description"] if "description" in t else ""
                             )
                         )
-                        tool_to_server_map[t.name] = { 
+                        tool_to_server_map[t["name"]] = { 
                             "url": url, 
-                            "inputSchema": t.inputSchema,
+                            "inputSchema": t["inputSchema"] if "inputSchema" in t else None,
                             "credentials": credentials,
                             "proto": proto
                         }
-                    log.info(f"Loaded {len(mcp_tools.tools)} tools from {name}")
-        except Exception as e:
-            log.error(f"Error accessing MCP server {name}: {str(e)}")
+                else:
+                    log.error(f"Cannot list tools from JSON-RPC MCP server {name}")
+            except Exception as e:
+                log.error(f"Error accessing JSON-RPC MCP server {name}: {str(e)}")
             
     return all_langchain_tools, tool_to_server_map
 

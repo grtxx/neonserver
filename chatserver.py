@@ -239,7 +239,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                     break
 
                 if len( session_data.messages) > 1:
-                    while len(messages) > 15 or not isinstance(messages[1], HumanMessage):
+                    while ( len(messages) > conf.get("chatparams.previousmessages", 15) ) or not isinstance(messages[1], HumanMessage): # type: ignore
                         messages.pop(1)  # Az első üzenet a rendszerüzenet, azt nem töröljük
                         if len(messages) <= 1:
                             break
@@ -248,9 +248,6 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                 toolCalls = 0
                 while True:
                     toolCalls += 1
-                    if toolCalls > conf.get( "chatparams.max_tool_calls", 5 ): # type: ignore
-                        await websocket.send_json({"type": "toolcall", "content": "**Túl sok eszköz hívás egy kérdésre.**"})
-                        break
                     #ai_msg = await llm_with_tools.ainvoke( messages )
 
                     ai_msg = None
@@ -289,17 +286,23 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                         break
 
                     # Ha vannak tool hívások, mindegyiket végrehajtjuk
+                    tcnt = 0
                     for tool_call in tool_calls_in_answer: # type: ignore                        
                         # MCP hívás
-                        await websocket.send_json({"type": "toolcall", "content": f"{tool_call['name']}..."}) # type: ignore
-                        observation = await call_mcp_tool( session_data, tool_call["name"], tool_call["args"], websocket, progress=lambda msg: websocket.send_json({"type": "toolcall", "content": msg}) )
-                        await websocket.send_json({"type": "toolcall", "content": f"finished"}) # type: ignore
+                        tcnt += 1
+                        await websocket.send_json({"type": "toolcall", "content": f"[{tcnt}/{len(tool_calls_in_answer)}] {tool_call['name']}({tool_call['args']})"}) # type: ignore
+                        observation = await call_mcp_tool( session_data, tool_call["name"], tool_call["args"], websocket, progress=lambda msg: websocket.send_json( { "type": "toolcall", "content": f"{msg}" } ) )
                         await websocket.send_json( {"type": "done" } ) # type: ignore
                         
                         # Visszajelzés a történetbe
                         t_msg = ToolMessage( content=str(observation), tool_call_id=tool_call["id"] )
                         await session_data.saveMessage( t_msg )
                         messages.append( t_msg )
+
+                    if toolCalls > conf.get( "chatparams.max_tool_calls", 5 ): # type: ignore
+                        await websocket.send_json({"type": "toolcall", "content": "**Túl sok eszköz hívás egy kérdésre.**"})
+                        await websocket.send_json( {"type": "done" } ) # type: ignore
+                        break
 
             except Exception as e:
                 await websocket.send_json({"type": "error", "content": str(e)})

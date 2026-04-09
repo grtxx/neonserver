@@ -55,6 +55,63 @@ def normalize_params( args: dict, toolparams: dict ) -> dict:
     return finalArguments
 
 
+async def call_mcp_tool_streamableHttp(sessiondata, name: str, args: dict, websocket: WebSocket, toolparams: dict, progress=None ):
+    try:
+        sseClient = sessiondata.getConfiguredStreamableHttpClient( toolparams )
+
+        async with sseClient as (read, write, _):
+            async with ClientSession(read, write) as session:
+                args = normalize_params( args, toolparams )
+                await session.initialize()
+                while True:
+                    #if ( progress is not None ):
+                    #    finalArguments['__progresscallback'] = progress
+                    result = await session.call_tool( name, arguments=args )
+                    if not "approvalToken" in toolparams['inputSchema']['properties']:
+                        break
+                    try:
+                        decresult = json.loads( result.content[0].text ) # type: ignore
+                        approvalToken = decresult.get( "approvalToken", "" )
+                        decresult["approvalToken"] = None
+                    except:
+                        # not a json response so not approval request
+                        break
+                    if ( not 'action' in decresult ):
+                        # no approval needed so exit from the loop
+                        break
+                    if decresult['action'] == 'approvalrequest':
+                        # automatically approve for now
+                        await websocket.send_json({"type": "approvalrequest", "content": decresult })
+                        useranswer = await websocket.receive_text()
+                        try:
+                            useranswer = json.loads( useranswer )
+                        except:
+                            # approval result invalid, break the loop
+                            break
+                        if ( not ( "type" in useranswer and "action" in useranswer ) ):
+                            # invalid response, break the loop
+                            break;
+                        if ( useranswer["type"] == "approvalresponse" and useranswer["action"] == "approved" ):
+                            # inject new params and call again
+                            if "overrides" in useranswer:
+                                for k in toolparams['inputSchema']['properties'].keys():
+                                    if ( k in useranswer["overrides"] ):
+                                        args[ k ] = useranswer["overrides"][ k ]
+                            args["approvalToken"] = approvalToken
+                        else:
+                            # not approved, exit
+                            result.content = useranswer["content"] if "content" in useranswer else "Tool operation interrupted by the user. DO NOT CALL ANY TOOL, WAIT FOR USER INPUT!" # type: ignore
+                            break
+
+                if result.content and hasattr(result.content[0], 'text'):
+                    return result.content[0].text # type: ignore
+                return str(result.content)
+                                
+    except Exception as e:
+        log.error(f"Tool not available: {e}")
+    return f"Tool not found: '{name}'"
+
+
 async def call_mcp_tool_sse(sessiondata, name: str, args: dict, websocket: WebSocket, toolparams: dict, progress=None ):
     try:
         sseClient = sessiondata.getConfiguredSSEClient( toolparams )
@@ -131,6 +188,9 @@ async def call_mcp_tool(sessiondata, name: str, args: dict, websocket: WebSocket
 
     elif toolparams['proto'] == 'jsonrpc':
         return await call_mcp_tool_jsonrpc( sessiondata, name, args, websocket, toolparams, progress )
+
+    elif toolparams['proto'] == 'streamablehttp':
+        return await call_mcp_tool_streamableHttp( sessiondata, name, args, websocket, toolparams, progress )
 
 
 

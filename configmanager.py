@@ -4,6 +4,7 @@ import logging
 from typing import Any
 import aiomysql # type: ignore
 from mcp.client.sse import sse_client  # type: ignore
+from mcp.client.streamable_http import streamable_http_client # type: ignore
 from mcp import ClientSession # type: ignore
 from langchain_core.tools import Tool # type: ignore
 from jsonmcp_client import jsonRPCClient
@@ -54,8 +55,44 @@ async def get_tools():
         url = servers[name]["url"]
         credentials = servers[name]["credentials"] if "credentials" in servers[name] else None
         proto = servers[name]["proto"] if "proto" in servers[name] else "sse"
+        overrides = servers[name]["overrides"] if "overrides" in servers[name] else {}
         log.info(f"Discovering tools: {name} ({url})")
         
+        if proto == "streamablehttp":
+            try:
+                # Rövid timeout-ot érdemes rátenni, hogy ne akadjon el a startup, ha egy szerver lehalt
+                async with streamable_http_client(url) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        mcp_tools = await session.list_tools()
+                        
+                        for t in mcp_tools.tools:
+                            if ( t.name in overrides.get('tools-disabled', []) ):
+                                log.info( f"  Skipped tool {t.name}, {t.description}" )
+                                continue
+                            log.info( f"  Discovered tool {t.name}" )
+                            desc = overrides.get( "prefix", "" ) + (t.description if t.description else "") + overrides.get( "postfix", "" )
+                            if ( overrides.get( t.name, None ) is not None ):
+                                desc = overrides[t.name]
+                            all_langchain_tools.append(
+                                Tool(
+                                    name=t.name,
+                                    func=None, 
+                                    description= desc
+                                )
+                            )
+                            tool_to_server_map[t.name] = { 
+                                "url": url, 
+                                "inputSchema": t.inputSchema,
+                                "credentials": credentials,
+                                "proto": proto
+                            }
+                            
+                        log.info(f"  Loaded {len(mcp_tools.tools)} tools from {name}")
+            except Exception as e:
+                log.error(f"Error accessing MCP server {name}: {str(e)}")
+
+
         if proto == "sse":
             try:
                 # Rövid timeout-ot érdemes rátenni, hogy ne akadjon el a startup, ha egy szerver lehalt
@@ -65,11 +102,18 @@ async def get_tools():
                         mcp_tools = await session.list_tools()
                         
                         for t in mcp_tools.tools:
+                            if ( t.name in overrides.get('tools-disabled', []) ):
+                                log.info( f"  Skipped tool {t.name}, {t.description}" )
+                                continue
+                            log.info( f"  Discovered tool {t.name}" )
+                            desc = overrides.get( "prefix", "" ) + (t.description if t.description else "") + overrides.get( "postfix", "" )
+                            if ( overrides.get( t.name, None ) is not None ):
+                                desc = overrides[t.name]
                             all_langchain_tools.append(
                                 Tool(
                                     name=t.name,
                                     func=None, 
-                                    description=t.description if t.description else ""
+                                    description= desc
                                 )
                             )
                             tool_to_server_map[t.name] = { 
@@ -78,7 +122,8 @@ async def get_tools():
                                 "credentials": credentials,
                                 "proto": proto
                             }
-                        log.info(f"Loaded {len(mcp_tools.tools)} tools from {name}")
+                            
+                        log.info(f"  Loaded {len(mcp_tools.tools)} tools from {name}")
             except Exception as e:
                 log.error(f"Error accessing MCP server {name}: {str(e)}")
 
@@ -88,11 +133,18 @@ async def get_tools():
                 mcp_tools = await jsonmcp.listTools()
                 if mcp_tools is not None:
                     for t in mcp_tools['tools']:
+                        if ( t['name'] in overrides.get('tools-disabled', []) ):
+                            log.info( f"  Skipped tool {t['name']}, {t['description']}" )
+                            continue
+                        log.info( f"  Discovered tool {t['name']}, {t['description']}" )
+                        desc = overrides.get("prefix", "") + t.get("description", "") + overrides.get("postfix", "") if "description" in t else ""
+                        if ( overrides.get( t['name'], None ) is not None ):
+                            desc = overrides[t['name']]
                         all_langchain_tools.append(
                             Tool(
                                 name=t["name"],
                                 func=None, 
-                                description=t["description"] if "description" in t else ""
+                                description=desc
                             )
                         )
                         tool_to_server_map[t["name"]] = { 

@@ -10,8 +10,10 @@ import json
 from fastapi import FastAPI # type: ignore
 import re
 from mcp.client.sse import sse_client # type: ignore
+from mcp.client.streamable_http import streamable_http_client # type: ignore
 from jsonmcp_client import jsonRPCClient
 import os
+import httpx
 
 class ChatSessionData: 
 
@@ -48,7 +50,7 @@ class ChatSessionData:
                 return persona
         except Exception as e:
             print( f"Error in reading persona file {fn}: {e}" )
-        return "Your name is BlackLight, you are totally dumb, don't understand any question, just telling things randomly. You speak in {language}";
+        return "Your name is BlackLight, you are almost dumb, don't understand any question, just telling things randomly but sometimes you can reflect to the user prompts and can give cryptic answers. You speak in {language}";
 
 
     async def createChat( self, mode: str, userdata=None ):
@@ -276,7 +278,7 @@ class ChatSessionData:
             pass
    
 
-    def getConfiguredSSEClient( self, toolparams ):
+    def getHeadersForTool( self, toolparams ):
         custom_headers = {}
         try:
             if "credentials" in toolparams and toolparams["credentials"] is not None:
@@ -297,6 +299,15 @@ class ChatSessionData:
                             }
         except Exception as e:
             pass
+        return custom_headers
+    
 
-        return sse_client( toolparams['url'], headers=custom_headers )
-        
+    def getConfiguredSSEClient( self, toolparams ):
+        return sse_client( toolparams['url'], headers=self.getHeadersForTool( toolparams ) )
+
+
+    def getConfiguredStreamableHttpClient( self, toolparams ):
+        client = httpx.AsyncClient(headers=self.getHeadersForTool( toolparams ), verify=False, timeout=30.0)
+        return streamable_http_client( url=toolparams['url'], http_client=client )
+
+

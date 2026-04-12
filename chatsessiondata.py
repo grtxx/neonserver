@@ -7,7 +7,7 @@ import aiomysql # type: ignore
 from configmanager import conf, log
 from langchain_core.messages import message_to_dict, messages_from_dict # type: ignore
 import json
-from fastapi import FastAPI # type: ignore
+from fastapi import FastAPI, WebSocket # type: ignore
 import re
 from mcp.client.sse import sse_client # type: ignore
 from mcp.client.streamable_http import streamable_http_client # type: ignore
@@ -65,7 +65,7 @@ class ChatSessionData:
         return self.sid
 
 
-    async def extractMemoryCommands( self, content, laststate=0, exec=False ) -> ( int, str ): # type: ignore
+    async def extractCommands( self, content, laststate=0, websocket: WebSocket | None=None, exec=False ) -> ( int, str ): # type: ignore
         commandMode = laststate
         currentCommand: str = ""
         commands = []
@@ -97,11 +97,11 @@ class ChatSessionData:
         if ( currentCommand != "" and commandMode == 1 ):
             commands.append( currentCommand )
         if exec:
-            await self.executeMemoryCommands( commands ) # type: ignore
+            await self.executeMemoryCommands( commands, websocket=websocket ) # type: ignore
         return ( commandMode, clearContent )
 
 
-    async def executeMemoryCommands( self, commands: Dict[ str, str ] ):
+    async def executeMemoryCommands( self, commands: Dict[ str, str ], websocket: WebSocket | None=None ):
         for k in commands:
             g = re.match( r"^\$\$\s*(USER|SESSION)\s*\|\s*([a-zA-Z0-9_]+)\s*\|\s*(.*)\s*\$\$$", k )
             if ( g ):
@@ -112,6 +112,9 @@ class ChatSessionData:
                     await self.saveUserMemory( id, content ) # type: ignore
                 elif ( type == "SESSION" ):
                     await self.saveSessionMemory( id, content ) # type: ignore
+                elif ( type == "OPENURL" ):
+                    if websocket is not None:
+                        await websocket.send_json( { "type": "openurl", "url": content } )
 
 
     async def getMemoryContents( self ):
@@ -225,7 +228,7 @@ class ChatSessionData:
                 self.messages = []
                 for dt in reversed( dts ):
                     msg = messages_from_dict( [ json.loads( dt["message"] ) ] )[0]
-                    ( ls, msg.content ) = await self.extractMemoryCommands( msg.content, 0, False )
+                    ( ls, msg.content ) = await self.extractCommands( msg.content, 0, websocket=None, exec=False )
                     if ( msg.content != "" ):
                         self.messages.append( msg )
 

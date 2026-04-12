@@ -1,8 +1,6 @@
 from contextlib import asynccontextmanager
 import json
-import sys
 from fastapi import FastAPI, WebSocket # type: ignore
-import langchain
 from mcp import ClientSession # type: ignore
 from langchain_google_genai import ChatGoogleGenerativeAI # type: ignore
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage # type: ignore
@@ -205,7 +203,7 @@ async def get_chat_history(sid: str):
     await session_data.load(sid)
     messages = []
     async for msg in session_data.getHistory():
-        ( ls, content ) = await session_data.extractMemoryCommands( msg.content, 0, False )
+        ( ls, content ) = await session_data.extractCommands( msg.content, 0, websocket=None, exec=False )
         messages.append( {
             "type": msg.type,
             "content": content,
@@ -329,7 +327,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                             if ( chunk.content[:-len(lastcontent)] == lastcontent ):
                                 chunk.content = chunk.content[-len(lastcontent):] # type: ignore
 
-                            ( laststate, lastcontent ) = await session_data.extractMemoryCommands( chunk.content, laststate, False ) # type: ignore
+                            ( laststate, lastcontent ) = await session_data.extractCommands( chunk.content, laststate, exec=False, websocket=websocket ) # type: ignore
                             content = chunk.content # type: ignore
                             if content:
                                 await websocket.send_json({"type": "token", "content": lastcontent } )
@@ -337,7 +335,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
                     if ai_msg:
                         await websocket.send_json({"type": "done"})
                         await session_data.saveMessage( ai_msg )
-                        await session_data.extractMemoryCommands( ai_msg.content, 0, True ) # type: ignore. 
+                        await session_data.extractCommands( ai_msg.content, 0, exec=True, websocket=websocket ) # type: ignore. 
                         # We do not use the output as we sent out the output in streaming mode, but we want to extract the memory 
                         # commands and execute them in the context of the full answer.
                         messages.append( ai_msg )

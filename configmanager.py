@@ -45,6 +45,10 @@ async def init_db():
     return db_pool
 
 
+def get_params_for_tool( self, map, tool_name: str):
+    return map.get(tool_name)
+
+
 async def get_tools():
     global conf
     all_langchain_tools = []
@@ -159,10 +163,6 @@ async def get_tools():
                 log.error(f"Error accessing JSON-RPC MCP server {name}: {str(e)}")
             
     return all_langchain_tools, tool_to_server_map
-
-
-def get_params_for_tool( map, tool_name: str):
-    return map.get(tool_name)
 
 
 conf = configManager()

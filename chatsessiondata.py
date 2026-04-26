@@ -27,7 +27,8 @@ class ChatSessionData:
             "modelConfig": {},
             "credentials": {},
             "userdata": {},
-            "systemprompt": ""
+            "systemprompt": "",
+            "status": "running"
         }
         self.settings["credentials"] = {}
         self.settings["userdata"] = {}
@@ -51,6 +52,16 @@ class ChatSessionData:
         except Exception as e:
             print( f"Error in reading persona file {fn}: {e}" )
         return "Your name is BlackLight, you are almost dumb, don't understand any question, just telling things randomly but sometimes you can reflect to the user prompts and can give cryptic answers. You speak in {language}";
+
+
+    async def updateStatus( self, status: str ):
+        oldStatus = self.settings["status"]
+        self.settings["status"] = status
+        await self.save()
+
+
+    async def createApproval( self, toolName: str, toolArgs: dict, toolCallId: str, toolResult: dict ):
+        pass
 
 
     async def createChat( self, mode: str, userdata=None ):

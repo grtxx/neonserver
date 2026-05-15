@@ -3,6 +3,7 @@ import os
 import logging
 from typing import Any
 import aiomysql # type: ignore
+import httpx
 from mcp.client.sse import sse_client  # type: ignore
 from mcp.client.streamable_http import streamable_http_client # type: ignore
 from mcp import ClientSession # type: ignore
@@ -65,7 +66,15 @@ async def get_tools():
         if proto == "streamablehttp":
             try:
                 # Rövid timeout-ot érdemes rátenni, hogy ne akadjon el a startup, ha egy szerver lehalt
-                async with streamable_http_client(url) as (read, write, _):
+
+                headers = {}
+                if credentials and credentials.get("type", "").lower() == "bearer":
+                    token = credentials.get("bearertoken")
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                httpclient = httpx.AsyncClient( headers = headers, timeout=10.0 ) # type: ignore
+
+                async with streamable_http_client(url, http_client=httpclient) as (read, write, _):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         mcp_tools = await session.list_tools()
@@ -171,7 +180,7 @@ logging.basicConfig(
     level=getattr( logging, conf.get("logging.level", "INFO"), logging.INFO ), # type: ignore
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler( conf.get( "logging.filename" ) ), # type: ignore
+        logging.FileHandler( conf.get( "logging.filename", os.path.dirname(__file__) + "/logs/chatlog.log" ) ), # type: ignore
         logging.StreamHandler()         
     ] )
 log = logging.getLogger( __name__)

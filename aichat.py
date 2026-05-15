@@ -288,16 +288,23 @@ class AIChat:
                         if ( chunk.content[:-len(lastcontent)] == lastcontent ):
                             chunk.content = chunk.content[-len(lastcontent):] # type: ignore
 
-                        ( laststate, lastcontent ) = await self.session_data.extractCommands( chunk.content, laststate, exec=False ) # type: ignore
+                        async for cmd in self.session_data.extractCommands( chunk.content, laststate, exec=False ): 
+                            if ( cmd["type"] == "result" ):
+                                lastcontent = cmd["content"]
+                                laststate = cmd["commandMode"]
+                                break
                         content = chunk.content # type: ignore
                         if content:
                             yield {"type": "token", "content": lastcontent }
 
             if ai_msg:
-                yield { 'type': 'done' }
+                if ai_msg.content != '':
+                    yield { 'type': 'done' }
                 self.messages.append( ai_msg )
                 await self.session_data.saveMessage( ai_msg )
-                await self.session_data.extractCommands( ai_msg.content, 0, exec=True ) # type: ignore. 
+                async for cmd in self.session_data.extractCommands( ai_msg.content, 0, exec=True ):
+                    if ( cmd["type"] == "uicommand" ):
+                        yield cmd["content"]
                     
                 # Ha vannak tool hívások, mindegyiket végrehajtjuk
                 tcnt = 0
@@ -337,6 +344,3 @@ class AIChat:
 
         async for res in self.Continue():
             yield res
-
-
-

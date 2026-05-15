@@ -1,9 +1,6 @@
 from contextlib import asynccontextmanager
-import json
 from fastapi import FastAPI, WebSocket # type: ignore
-from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage # type: ignore
 from fastapi.responses import FileResponse # type: ignore
-from chatsessiondata import ChatSessionData
 from configmanager import conf, log
 import configmanager
 from fastapi import Request # type: ignore
@@ -36,7 +33,10 @@ async def get_chat_history(sid: str):
     await chat.loadChat( sid )
     messages = []
     async for msg in chat.getHistory():
-        ( ls, content ) = await chat.session_data.extractCommands( msg.content, 0, websocket=None, exec=False )
+        async for cmd in chat.session_data.extractCommands( msg.content, 0, exec=False ):
+            if ( cmd["type"] == "result" ):
+                content = cmd["content"]
+                break
         if ( msg.type != "tool" ):
             messages.append( {
                 "type": msg.type,

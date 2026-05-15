@@ -76,7 +76,7 @@ class ChatSessionData:
         return self.sid
 
 
-    async def extractCommands( self, content, laststate=0, websocket: WebSocket | None=None, exec=False ) -> ( int, str ): # type: ignore
+    async def extractCommands( self, content, laststate=0, exec=False ): # type: ignore
         commandMode = laststate
         currentCommand: str = ""
         commands = []
@@ -86,7 +86,8 @@ class ChatSessionData:
             if ( len(content) > 0 ):  
                 content = content[0]
             else:
-                return (commandMode, "")
+                yield { 'type': 'result', 'commandMode': commandMode, 'content': '' }
+                return
         if "text" in content and not isinstance(content, str): # type: ignore
             content = content["text"]  # type: ignore
         for c in range( len(content) ): # type: ignore
@@ -108,13 +109,15 @@ class ChatSessionData:
         if ( currentCommand != "" and commandMode == 1 ):
             commands.append( currentCommand )
         if exec:
-            await self.executeMemoryCommands( commands, websocket=websocket ) # type: ignore
-        return ( commandMode, clearContent )
+            async for cmd in self.executeMemoryCommands( commands ):
+                yield { 'type': 'uicommand', 'content': cmd }
+        yield { 'type': 'result', 'commandMode': commandMode, 'content': clearContent }
+        return
 
 
-    async def executeMemoryCommands( self, commands: Dict[ str, str ], websocket: WebSocket | None=None ):
+    async def executeMemoryCommands( self, commands: Dict[ str, str ] ):
         for k in commands:
-            g = re.match( r"^\$\$\s*(USER|SESSION)\s*\|\s*([a-zA-Z0-9_]+)\s*\|\s*(.*)\s*\$\$$", k )
+            g = re.match( r"^\$\$\s*([^\|]+?)\s*\|\s*([a-zA-Z0-9_]+)\s*\|?\s*?(.*)?\s*?\$\$$", k )
             if ( g ):
                 type = g.group(1)
                 id = g.group(2)
@@ -124,8 +127,7 @@ class ChatSessionData:
                 elif ( type == "SESSION" ):
                     await self.saveSessionMemory( id, content ) # type: ignore
                 elif ( type == "OPENURL" ):
-                    if websocket is not None:
-                        await websocket.send_json( { "type": "openurl", "url": content } )
+                    yield { "type": "openurl", "url": content }
 
 
     async def getMemoryContents( self ):
@@ -239,7 +241,10 @@ class ChatSessionData:
                 self.messages = []
                 for dt in reversed( dts ):
                     msg = messages_from_dict( [ json.loads( dt["message"] ) ] )[0]
-                    ( ls, msg.content ) = await self.extractCommands( msg.content, 0, websocket=None, exec=False )
+                    async for cmd in self.extractCommands( msg.content, 0, exec=False ):
+                        if ( cmd["type"] == "result" ):
+                            msg.content = cmd["content"]
+                            break;
                     if ( msg.content != "" ):
                         self.messages.append( msg )
 

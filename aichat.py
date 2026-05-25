@@ -150,7 +150,7 @@ class AIChat:
                     await session.initialize()
                     result = session.call_tool( name, arguments=args )
                     if inspect.isasyncgen( result ):
-                        async for chunk in result:
+                        async for chunk in result: # type: ignore
                             if chunk.content and hasattr(chunk.content[0], 'text'):
                                 yield chunk.content[0].text # type: ignore
                     if inspect.isawaitable( result ):
@@ -167,7 +167,7 @@ class AIChat:
                     args = self.normalize_params( args, toolparams ) # type: ignore
                     await session.initialize()
                     result = session.call_tool( name, arguments=args )
-                    async for chunk in result:
+                    async for chunk in result: # type: ignore
                         if chunk.content and hasattr(chunk.content[0], 'text'):
                             yield chunk.content[0].text # type: ignore
 #        except Exception as e:
@@ -227,21 +227,21 @@ class AIChat:
 
 
     async def ApproveAndContinue( self, approval_id, useranswer ):
-        approval = await self.session_data.getApproval( approval_id )
+        approval = await self.session_data.getApproval( approval_id ) # type: ignore
         approvalToken = approval['args'].get( "approvalToken", "" )
 
         if ( not ( "type" in useranswer and "action" in useranswer ) ):
             # invalid response, break the loop
             return
         if "overrides" in useranswer:
-            for k in toolparams['inputSchema']['properties'].keys():
+            for k in toolparams['inputSchema']['properties'].keys(): # type: ignore
                 if ( k in useranswer["overrides"] ):
                     approval['args'][ k ] = useranswer["overrides"][ k ]
         approval['args']["approvalToken"] = approvalToken
 
         observation = self.call_mcp_tool( approval["name"], approval["args"] ) # , progress=lambda msg: websocket.send_json( { "type": "toolcall", "content": f"{msg}" } )
         
-        async for ob in observation:
+        async for ob in observation: # type: ignore
             t_msg = ToolMessage( content=str(ob), tool_call_id=approval["tool_call_id"] )
             await self.session_data.saveMessage( t_msg )
             self.messages.append( t_msg )

@@ -69,7 +69,7 @@ class ChatSessionData:
         self.sid = uuid.uuid4().hex
         self.settings["mode"] = mode
         if ( mode == "default" ):
-            self.settings["model"] = "gemini-3-flash-preview"
+            self.settings["model"] = conf.get( "chatparams.model", "gemini-3-flash" )
             self.settings["systemprompt"] = self.readPersona( "neon" )
             self.settings["modelConfig"] = conf.get()["models"][ self.settings["model"] ]
         await self.save()
@@ -109,7 +109,7 @@ class ChatSessionData:
         if ( currentCommand != "" and commandMode == 1 ):
             commands.append( currentCommand )
         if exec:
-            async for cmd in self.executeMemoryCommands( commands ):
+            async for cmd in self.executeMemoryCommands( commands ): # type: ignore
                 yield { 'type': 'uicommand', 'content': cmd }
         yield { 'type': 'result', 'commandMode': commandMode, 'content': clearContent }
         return

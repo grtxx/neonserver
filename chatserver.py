@@ -86,7 +86,7 @@ async def websocket_endpoint(websocket: WebSocket, sid: str):
 
     chat = AIChat( app, 
                   onApproveCallback=approveCallback,
-                  activeHistorySize=int( conf.get("chatparams.previousmessages", 15) ) 
+                  activeHistorySize=int( conf.get("chatparams.previousmessages", 15) ) # type: ignore
     ) # type: ignore
     await chat.loadChat( sid )
 
